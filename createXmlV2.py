@@ -5,10 +5,9 @@ from basic_core_structure import (
     add_session_origin,
     add_session_options,
     add_session_metadata,
-    add_default_services
+    add_default_services,
+    add_mobility_configurations
 )
-
-
 
 
 
@@ -21,32 +20,37 @@ with open("scenario_config.json") as f:
     config = json.load(f)
 
 device_config = config["devices"]
-link_config = config["links"]
 
+
+autogenerate = config.get("autogenerate_links", False)
 
 # Handle static CORE XML sections 
 networks = ET.SubElement(scenario, "networks")
 
 builder = NetworkBuilder(start_id=1)
-# builder.add_user_networks(networks)
+
 builder.add_user_networks(networks, device_config)
 
 
 devices = ET.SubElement(scenario, "devices")
-# builder.add_user_devices(devices)
+
 builder.add_user_devices(devices, device_config)
 
-# connections = [(4, 2), (4, 3),(4,1)]  
-# connections = [(1, 2), (1, 3),(1,6),(6,4),(5,6) ]
-# connections = [(1, 3), (1, 4),(8,5),(8,6),(8,9) ,(9,2) ,(2,7) ,(8,1)]
+#connections
 
-connections = link_config
-
-
-
+if autogenerate or "links" not in config:
+    connections = builder.generate_random_links()
+else:
+    connections = config["links"]
 
 links = ET.SubElement(scenario, "links")
-builder.generate_links(links,  connections)
+builder.generate_links(links, connections)
+
+builder.add_configservice_configurations(scenario)
+
+add_mobility_configurations(scenario, builder.device_registry)
+
+
 
 config_services = ET.SubElement(scenario, "configservice_configurations")
 
@@ -64,6 +68,6 @@ tree = ET.ElementTree(scenario)
 ET.indent(tree, space="  ") 
 
 # Save to file
-tree.write("scenario_with_static1.xml", encoding="UTF-8", xml_declaration=True)
+tree.write("scenario_with_static.xml", encoding="UTF-8", xml_declaration=True)
 
 

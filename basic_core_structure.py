@@ -72,3 +72,37 @@ def add_default_services(scenario):
         node = ET.SubElement(default_services, "node", {"type": node_type})
         for svc in services:
             ET.SubElement(node, "service", {"name": svc})
+
+
+            
+def add_mobility_configurations(scenario, device_registry):
+    # Add mobility_configurations section for WIRELESS_LAN devices
+    mobility_configurations = ET.Element("mobility_configurations")
+    added_any = False
+
+    for device_id, info in device_registry.items():
+        if info["type"] == "WIRELESS_LAN":
+            mobility = ET.SubElement(mobility_configurations, "mobility_configuration", {
+                "node": str(device_id),
+                "model": "basic_range"
+            })
+
+            configs = [
+                ("range", "275"),
+                ("bandwidth", "54000000"),
+                ("jitter", "0"),
+                ("delay", "5000"),
+                ("error", "0.0"),
+                ("promiscuous", "0")
+            ]
+
+            for name, value in configs:
+                ET.SubElement(mobility, "configuration", {
+                    "name": name,
+                    "value": value
+                })
+
+            added_any = True
+
+    if added_any:
+        scenario.append(mobility_configurations)
