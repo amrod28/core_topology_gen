@@ -125,22 +125,23 @@ class NetworkBuilder:
 
                 self.current_id += 1
 
+
     def generate_links(self, links_element, connections):
         subnet_counter = 1
         adjacency = {}
+        deferred_lans = []  # To retry lans later
+
         for node1, node2 in connections:
             adjacency.setdefault(node1, []).append(node2)
             adjacency.setdefault(node2, []).append(node1)
 
         self.adjacency = adjacency
-
         linked_pairs = set()
 
-        # Process connections: wireless and direct links
+        # First pass: Wireless and direct links
         for node1, node2 in connections:
             type1 = self.device_registry[node1]["type"].lower()
             type2 = self.device_registry[node2]["type"].lower()
-
             pair_key = tuple(sorted((node1, node2)))
 
             if "wireless_lan" in (type1, type2):
@@ -155,23 +156,39 @@ class NetworkBuilder:
                 linked_pairs.add(pair_key)
                 subnet_counter += 1
 
-        # Process LAN links (switch/hub)
+        # First pass: LAN links (switch/hub)
         for device_id, info in self.device_registry.items():
             device_type = info["type"].lower()
             if device_type in {"switch", "hub"} and device_id in adjacency:
                 neighbors = adjacency[device_id]
                 if neighbors:
                     link_group = self._create_lan_links(device_id, neighbors, subnet_counter)
-                    for link in link_group:
-                        # Extract node1 + node2 from link attributes
-                        node1 = int(link.attrib["node1"])
-                        node2 = int(link.attrib["node2"])
-                        pair_key = tuple(sorted((node1, node2)))
-                        if pair_key not in linked_pairs:
-                            links_element.append(link)
-                            linked_pairs.add(pair_key)
-                    subnet_counter += 1
+                    if link_group:
+                        for link in link_group:
+                            node1 = int(link.attrib["node1"])
+                            node2 = int(link.attrib["node2"])
+                            pair_key = tuple(sorted((node1, node2)))
+                            if pair_key not in linked_pairs:
+                                links_element.append(link)
+                                linked_pairs.add(pair_key)
+                        subnet_counter += 1
+                    else:
+                        deferred_lans.append((device_id, neighbors))
 
+        # Second pass: Retry deferred LANs
+        for center_id, neighbors in deferred_lans:
+            link_group = self._create_lan_links(center_id, neighbors, subnet_counter)
+            if link_group:
+                for link in link_group:
+                    node1 = int(link.attrib["node1"])
+                    node2 = int(link.attrib["node2"])
+                    pair_key = tuple(sorted((node1, node2)))
+                    if pair_key not in linked_pairs:
+                        links_element.append(link)
+                        linked_pairs.add(pair_key)
+                subnet_counter += 1
+            else:
+                print(f"[Notice] Could not link switch/hub {center_id} to {neighbors} — no router or MDR available.")
 
 
     def _is_direct_link(self, type1, type2):
