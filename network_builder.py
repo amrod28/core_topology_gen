@@ -1,12 +1,15 @@
 
 import xml.etree.ElementTree as ET
 import random
+import sys
 
 class NetworkBuilder:
 
-    def __init__(self, start_id=1):
+    def __init__(self, start_id=1, ip4_base="10.0.0.0", ip6_base="2001::"):
         #Begin counting devices from this value
         self.current_id = start_id
+        self.ip4_base = ip4_base
+        self.ip6_base = ip6_base
 
         # Prefix used for naming different types of networks 
         self.network_prefixes = {
@@ -46,6 +49,14 @@ class NetworkBuilder:
         return network
 
     def add_user_networks(self, networks_element, device_counts):
+
+        switches = device_counts.get("SWITCH", 0)
+        routers = device_counts.get("router", 0)
+
+        if switches > routers:
+            # raise ValueError("Invalid topology: number of switches exceeds number of routers.")
+            print("Invalid topology: number of switches exceeds number of routers.")
+            sys.exit()
 
         # Adds network nodes like switches, routers, etc to the scenario
         for net_type in self.network_prefixes:
@@ -124,7 +135,13 @@ class NetworkBuilder:
                 }
 
                 self.current_id += 1
+# ///////////
+    def _get_subnet_prefix(self, subnet_counter):
+        ip4_parts = self.ip4_base.split(".")
+        ip4_prefix = f"{ip4_parts[0]}.{ip4_parts[1]}.{int(ip4_parts[2]) + subnet_counter}."
 
+        ip6_prefix = f"{self.ip6_base.rstrip(':')}:{subnet_counter}"
+        return ip4_prefix, ip6_prefix
 
     def generate_links(self, links_element, connections):
         subnet_counter = 1
@@ -151,6 +168,9 @@ class NetworkBuilder:
                 subnet_counter += 1
 
             elif self._is_direct_link(type1, type2):
+                if type2 in {"router", "mdr"} and type1 not in {"router", "mdr"}:
+                    node1, node2 = node2, node1
+                    type1, type2 = type2, type1
                 link = self._create_direct_link(node1, node2, subnet_counter)
                 links_element.append(link)
                 linked_pairs.add(pair_key)
@@ -198,8 +218,10 @@ class NetworkBuilder:
     
     def _create_direct_link(self, node1, node2, subnet_counter):
         # Create a link element between two devices, with IP interfaces
-        ip4_prefix = f"10.0.{subnet_counter}." #TODO Change to be dynamic 
-        ip6_prefix = f"2001::{subnet_counter}"
+        # ip4_prefix = f"10.0.{subnet_counter}." #TODO Change to be dynamic 
+        # ip6_prefix = f"2001::{subnet_counter}"
+
+        ip4_prefix, ip6_prefix = self._get_subnet_prefix(subnet_counter)
 
         iface1_id = self.device_registry[node1]["interfaces"]
         iface2_id = self.device_registry[node2]["interfaces"]
@@ -249,8 +271,10 @@ class NetworkBuilder:
     def _create_lan_links(self, center_id, neighbors, subnet_counter):
         # Creates links between a switch/hub and all its neighbors using a shared subnet
         links = []
-        ip4_prefix = f"10.0.{subnet_counter}."
-        ip6_prefix = f"2001::{subnet_counter}"
+        # ip4_prefix = f"10.0.{subnet_counter}."
+        # ip6_prefix = f"2001::{subnet_counter}"
+        ip4_prefix, ip6_prefix = self._get_subnet_prefix(subnet_counter)
+
         ip_host = 1  # Host counter for IP assignments
 
         # Find the router if any to use as reference
@@ -345,8 +369,10 @@ class NetworkBuilder:
             })
         else:
             # iface2 for other connections
-            ip4_prefix = f"10.0.{subnet_counter}."
-            ip6_prefix = f"2001:0:0:{subnet_counter}::"
+            # ip4_prefix = f"10.0.{subnet_counter}."
+            # ip6_prefix = f"2001:0:0:{subnet_counter}::"
+            ip4_prefix, ip6_prefix = self._get_subnet_prefix(subnet_counter)
+
 
             iface2 = ET.Element("iface2", {
                 "id": str(iface_id),
@@ -430,34 +456,26 @@ class NetworkBuilder:
         return f"{latitude:.12f}", f"{longitude:.12f}"
     
 
+    #deterministic
     def generate_random_links(self):
         links = []
         seen_links = []
 
         # Group devices by type
-      
         routers = []
-        for device_id, device_info in self.device_registry.items():
-            device_type = device_info["type"].lower()
-            if device_type == "router":
-                routers.append(device_id)
-
-        
         switch_and_hubs = []
-        for device_id, device_info in self.device_registry.items():
-            device_type = device_info["type"].lower()
-            if device_type in ("switch", "hub"):
-                switch_and_hubs.append(device_id)
-
-
         pcs = []
-        for device_id, device_info in self.device_registry.items():
-            device_type = device_info["type"].lower()
-            if device_type == "pc":
+
+        for device_id, info in self.device_registry.items():
+            dtype = info["type"].lower()
+            if dtype == "router":
+                routers.append(device_id)
+            elif dtype in {"switch", "hub"}:
+                switch_and_hubs.append(device_id)
+            elif dtype == "pc":
                 pcs.append(device_id)
 
-
-        # Link routers to each other 
+        # Link routers to each other
         for i in range(len(routers)):
             for j in range(i + 1, len(routers)):
                 r1, r2 = routers[i], routers[j]
@@ -466,23 +484,26 @@ class NetworkBuilder:
                     links.append(link)
                     seen_links.append(link)
 
-        # Attach each switch to a router 
+        # Attach each switch to a router (record which switches got a router)
         router_index = 0
-        for device_id in switch_and_hubs:
+        switches_connected_to_routers = set()
+        for switch_id in switch_and_hubs:
             if routers:
                 router_id = routers[router_index % len(routers)]
-                link = (min(device_id, router_id), max(device_id, router_id))
+                link = (min(switch_id, router_id), max(switch_id, router_id))
                 if link not in seen_links:
                     links.append(link)
                     seen_links.append(link)
-                router_index += 1
+                    switches_connected_to_routers.add(switch_id)
+                    router_index += 1
 
-        parent_devices = switch_and_hubs + routers  
-    
+        # Now connect PCs to a switch that has a router connected
+        preferred_parents = list(switches_connected_to_routers) or routers  # fallback to router if no such switch
+
         parent_index = 0
         for pc in pcs:
-            for _ in range(len(parent_devices)):
-                parent = parent_devices[parent_index % len(parent_devices)]
+            for _ in range(len(preferred_parents)):
+                parent = preferred_parents[parent_index % len(preferred_parents)]
                 link = (min(pc, parent), max(pc, parent))
                 if link not in seen_links:
                     links.append(link)
@@ -491,16 +512,65 @@ class NetworkBuilder:
                     break
                 parent_index += 1
 
-
         return links
 
 
+    def generate_non_deterministic_links(self):
+        links = []
+        seen_links = set()
 
+        routers = []
+        switch_and_hubs = []
+        pcs = []
 
+        for device_id, info in self.device_registry.items():
+            dtype = info["type"].lower()
+            if dtype == "router":
+                routers.append(device_id)
+            elif dtype in {"switch", "hub"}:
+                switch_and_hubs.append(device_id)
+            elif dtype == "pc":
+                pcs.append(device_id)
 
+        # Shuffle to introduce randomness
+        random.shuffle(routers)
+        random.shuffle(switch_and_hubs)
+        random.shuffle(pcs)
 
+        # Optional: randomly link some routers to each other
+        for i in range(len(routers)):
+            for j in range(i + 1, len(routers)):
+                if random.random() < 0.5:
+                    r1, r2 = routers[i], routers[j]
+                    link = (min(r1, r2), max(r1, r2))
+                    if link not in seen_links:
+                        links.append(link)
+                        seen_links.add(link)
 
+        # Constraint: No router can have more than one switch
+        router_switch_count = {r: 0 for r in routers}
 
+        for switch in switch_and_hubs:
+            available_routers = [r for r, count in router_switch_count.items() if count < 1]
+            if available_routers:
+                chosen_router = random.choice(available_routers)
+                link = (min(switch, chosen_router), max(switch, chosen_router))
+                if link not in seen_links:
+                    links.append(link)
+                    seen_links.add(link)
+                    router_switch_count[chosen_router] += 1
+
+        # PCs connect to any available switch (or router if no switches)
+        preferred_parents = switch_and_hubs or routers
+        for pc in pcs:
+            if preferred_parents:
+                parent = random.choice(preferred_parents)
+                link = (min(pc, parent), max(pc, parent))
+                if link not in seen_links:
+                    links.append(link)
+                    seen_links.add(link)
+
+        return links
 
 
    

@@ -103,6 +103,11 @@ def submit():
             "router": int(router_entry.get()),
             "mdr": int(mdr_entry.get())
         }
+        
+        if devices["SWITCH"] > devices["router"]:
+            messagebox.showerror("Invalid Topology", "Number of switches cannot exceed the number of routers.")
+            return
+
 
         link_option = link_choice.get()
 

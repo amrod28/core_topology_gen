@@ -24,10 +24,18 @@ device_config = config["devices"]
 
 autogenerate = config.get("autogenerate_links", False)
 
+custom_ips = config.get("custom_ipv4s")
+
+deterministic_links = config.get("deterministic_links")
+
 # Handle static CORE XML sections 
 networks = ET.SubElement(scenario, "networks")
 
-builder = NetworkBuilder(start_id=1)
+if not custom_ips:
+    builder = NetworkBuilder(start_id=1, ip4_base="192.168.5.0", ip6_base="2001::0")
+else:
+    builder = NetworkBuilder(1, custom_ips, "2001::0")
+
 
 builder.add_user_networks(networks, device_config)
 
@@ -39,7 +47,10 @@ builder.add_user_devices(devices, device_config)
 #connections
 
 if autogenerate or "links" not in config:
-    connections = builder.generate_random_links()
+    if deterministic_links:
+        connections = builder.generate_random_links()
+    else:
+        connections = builder.generate_non_deterministic_links()
 else:
     connections = config["links"]
 
@@ -52,7 +63,7 @@ add_mobility_configurations(scenario, builder.device_registry)
 
 
 
-config_services = ET.SubElement(scenario, "configservice_configurations")
+
 
 
 # Add static sections using helper methods
